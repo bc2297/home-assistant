@@ -55,9 +55,6 @@ DEFAULT_OPTIMISTIC = False
 OSCILLATE_ON_PAYLOAD = 'oscillate_on'
 OSCILLATE_OFF_PAYLOAD = 'oscillate_off'
 
-#OSCILLATION = 'oscillation'
-
-
 PLATFORM_SCHEMA = mqtt.MQTT_RW_PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
     vol.Optional(CONF_STATE_VALUE_TEMPLATE): cv.template,
@@ -149,7 +146,7 @@ class MqttFan(FanEntity):
             optimistic or topic[CONF_OSCILLATION_STATE_TOPIC] is None)
         self._optimistic_speed = (
             optimistic or topic[CONF_SPEED_STATE_TOPIC] is None)
-        self._optimistic_dreiction = (
+        self._optimistic_direction = (
             optimistic or topic[CONF_DIRECTION_STATE_TOPIC] is None)
         self._state = False
         self._speed = None
