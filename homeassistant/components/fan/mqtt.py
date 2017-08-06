@@ -21,7 +21,8 @@ from homeassistant.components.fan import (SPEED_LOW, SPEED_MEDIUM,
                                           SPEED_HIGH, FanEntity,
                                           SUPPORT_SET_SPEED, SUPPORT_OSCILLATE,
                                           SUPPORT_DIRECTION, SPEED_OFF,
-                                          ATTR_SPEED, DIRECTION_FORWARD,
+                                          ATTR_OSCILLATING, ATTR_SPEED,
+                                          ATTR_DIRECTION, DIRECTION_FORWARD,
                                           DIRECTION_REVERSE)
 
 _LOGGER = logging.getLogger(__name__)
@@ -107,7 +108,7 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
         {
             CONF_STATE: config.get(CONF_STATE_VALUE_TEMPLATE),
             ATTR_SPEED: config.get(CONF_SPEED_VALUE_TEMPLATE),
-            ATTR_OSCILLATION: config.get(CONF_OSCILLATION_VALUE_TEMPLATE),
+            ATTR_OSCILLATING: config.get(CONF_OSCILLATION_VALUE_TEMPLATE),
             ATTR_DIRECTION: config.get(CONF_DIRECTION_VALUE_TEMPLATE)
         },
         config.get(CONF_QOS),
@@ -157,7 +158,7 @@ class MqttFan(FanEntity):
                                      is not None and SUPPORT_OSCILLATE)
         self._supported_features |= (topic[CONF_SPEED_STATE_TOPIC]
                                      is not None and SUPPORT_SET_SPEED)
-        self._supported_features |= (topic[CONF_SPEED_DIRECTION_TOPIC]
+        self._supported_features |= (topic[CONF_DIRECTION_STATE_TOPIC]
                                      is not None and SUPPORT_DIRECTION)
 
     @asyncio.coroutine
@@ -355,7 +356,7 @@ class MqttFan(FanEntity):
             self.hass.async_add_job(self.async_update_ha_state())
 
     @asyncio.coroutine
-    def async_direction(self, direction: str) -> None:
+    def async_set_direction(self, direction: str) -> None:
         """Set direction.
 
         This method is a coroutine.
@@ -367,6 +368,8 @@ class MqttFan(FanEntity):
             payload = self._payload[DIRECTION_FORWARD]
         elif direction is DIRECTION_REVERSE:
             payload = self._payload[DIRECTION_REVERSE]
+        else:
+            payload = direction
 
         mqtt.async_publish(
             self.hass, self._topic[CONF_DIRECTION_COMMAND_TOPIC],
