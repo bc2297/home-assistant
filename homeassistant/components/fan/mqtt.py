@@ -20,7 +20,9 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.components.fan import (SPEED_LOW, SPEED_MEDIUM,
                                           SPEED_HIGH, FanEntity,
                                           SUPPORT_SET_SPEED, SUPPORT_OSCILLATE,
-                                          SPEED_OFF, ATTR_SPEED)
+                                          SUPPORT_DIRECTION, SPEED_OFF,
+                                          ATTR_SPEED, DIRECTION_FORWARD,
+                                          DIRECTION_REVERSE)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +41,11 @@ CONF_PAYLOAD_LOW_SPEED = 'payload_low_speed'
 CONF_PAYLOAD_MEDIUM_SPEED = 'payload_medium_speed'
 CONF_PAYLOAD_HIGH_SPEED = 'payload_high_speed'
 CONF_SPEED_LIST = 'speeds'
+CONF_DIRECTION_STATE_TOPIC = 'direction_state_topic'
+CONF_DIRECTION_COMMAND_TOPIC = 'direction_command_topic'
+CONF_DIRECTION_VALUE_TEMPLATE = 'direction_value_template'
+CONF_PAYLOAD_FORWARD_DIRECTION = 'payload_forward_direction'
+CONF_PAYLOAD_REVERSE_DIRECTION = 'payload_reverse_direction'
 
 DEFAULT_NAME = 'MQTT Fan'
 DEFAULT_PAYLOAD_ON = 'ON'
@@ -48,7 +55,8 @@ DEFAULT_OPTIMISTIC = False
 OSCILLATE_ON_PAYLOAD = 'oscillate_on'
 OSCILLATE_OFF_PAYLOAD = 'oscillate_off'
 
-OSCILLATION = 'oscillation'
+#OSCILLATION = 'oscillation'
+
 
 PLATFORM_SCHEMA = mqtt.MQTT_RW_PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
@@ -59,6 +67,9 @@ PLATFORM_SCHEMA = mqtt.MQTT_RW_PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_OSCILLATION_STATE_TOPIC): mqtt.valid_subscribe_topic,
     vol.Optional(CONF_OSCILLATION_COMMAND_TOPIC): mqtt.valid_publish_topic,
     vol.Optional(CONF_OSCILLATION_VALUE_TEMPLATE): cv.template,
+    vol.Optional(CONF_DIRECTION_STATE_TOPIC): mqtt.valid_subscribe_topic,
+    vol.Optional(CONF_DIRECTION_COMMAND_TOPIC): mqtt.valid_subscribe_topic,
+    vol.Optional(CONF_DIRECTION_VALUE_TEMPLATE): cv.template,
     vol.Optional(CONF_PAYLOAD_ON, default=DEFAULT_PAYLOAD_ON): cv.string,
     vol.Optional(CONF_PAYLOAD_OFF, default=DEFAULT_PAYLOAD_OFF): cv.string,
     vol.Optional(CONF_PAYLOAD_OSCILLATION_ON,
@@ -71,6 +82,10 @@ PLATFORM_SCHEMA = mqtt.MQTT_RW_PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_SPEED_LIST,
                  default=[SPEED_OFF, SPEED_LOW,
                           SPEED_MEDIUM, SPEED_HIGH]): cv.ensure_list,
+    vol.Optional(CONF_PAYLOAD_FORWARD_DIRECTION,
+                 default=DIRECTION_FORWARD): cv.string,
+    vol.Optional(CONF_PAYLOAD_REVERSE_DIRECTION,
+                 default=DIRECTION_REVERSE): cv.string,
     vol.Optional(CONF_OPTIMISTIC, default=DEFAULT_OPTIMISTIC): cv.boolean,
 })
 
@@ -88,12 +103,15 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
                 CONF_SPEED_COMMAND_TOPIC,
                 CONF_OSCILLATION_STATE_TOPIC,
                 CONF_OSCILLATION_COMMAND_TOPIC,
+                CONF_DIRECTION_STATE_TOPIC,
+                CONF_DIRECTION_COMMAND_TOPIC
             )
         },
         {
             CONF_STATE: config.get(CONF_STATE_VALUE_TEMPLATE),
             ATTR_SPEED: config.get(CONF_SPEED_VALUE_TEMPLATE),
-            OSCILLATION: config.get(CONF_OSCILLATION_VALUE_TEMPLATE)
+            ATTR_OSCILLATION: config.get(CONF_OSCILLATION_VALUE_TEMPLATE),
+            ATTR_DIRECTION: config.get(CONF_DIRECTION_VALUE_TEMPLATE)
         },
         config.get(CONF_QOS),
         config.get(CONF_RETAIN),
@@ -105,6 +123,8 @@ def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
             SPEED_LOW: config.get(CONF_PAYLOAD_LOW_SPEED),
             SPEED_MEDIUM: config.get(CONF_PAYLOAD_MEDIUM_SPEED),
             SPEED_HIGH: config.get(CONF_PAYLOAD_HIGH_SPEED),
+            DIRECTION_FORWARD: config.get(CONF_PAYLOAD_FORWARD_DIRECTION),
+            DIRECTION_REVERSE: config.get(CONF_PAYLOAD_REVERSE_DIRECTION),
         },
         config.get(CONF_SPEED_LIST),
         config.get(CONF_OPTIMISTIC),
@@ -129,14 +149,19 @@ class MqttFan(FanEntity):
             optimistic or topic[CONF_OSCILLATION_STATE_TOPIC] is None)
         self._optimistic_speed = (
             optimistic or topic[CONF_SPEED_STATE_TOPIC] is None)
+        self._optimistic_dreiction = (
+            optimistic or topic[CONF_DIRECTION_STATE_TOPIC] is None)
         self._state = False
         self._speed = None
         self._oscillation = None
+        self._direction = None
         self._supported_features = 0
         self._supported_features |= (topic[CONF_OSCILLATION_STATE_TOPIC]
                                      is not None and SUPPORT_OSCILLATE)
         self._supported_features |= (topic[CONF_SPEED_STATE_TOPIC]
                                      is not None and SUPPORT_SET_SPEED)
+        self._supported_features |= (topic[CONF_SPEED_DIRECTION_TOPIC]
+                                     is not None and SUPPORT_DIRECTION)
 
     @asyncio.coroutine
     def async_added_to_hass(self):
@@ -188,7 +213,7 @@ class MqttFan(FanEntity):
         @callback
         def oscillation_received(topic, payload, qos):
             """Handle new received MQTT message for the oscillation."""
-            payload = templates[OSCILLATION](payload)
+            payload = templates[ATTR_OSCILLATING](payload)
             if payload == self._payload[OSCILLATE_ON_PAYLOAD]:
                 self._oscillation = True
             elif payload == self._payload[OSCILLATE_OFF_PAYLOAD]:
@@ -200,6 +225,22 @@ class MqttFan(FanEntity):
                 self.hass, self._topic[CONF_OSCILLATION_STATE_TOPIC],
                 oscillation_received, self._qos)
         self._oscillation = False
+
+        @callback
+        def direction_received(topic, payload, qos):
+            """Handle new received MQTT message for the direction."""
+            payload = templates[ATTR_DIRECTION](payload)
+            if payload == self._payload[DIRECTION_FORWARD]:
+                self._direction = DIRECTION_FORWARD
+            elif payload == self._payload[DIRECTION_REVERSE]:
+                self._direction = DIRECTION_REVERSE
+            self.hass.async_add_job(self.async_update_ha_state())
+
+        if self._topic[CONF_DIRECTION_STATE_TOPIC] is not None:
+            yield from mqtt.async_subscribe(
+                self.hass, self._topic[CONF_DIRECTION_STATE_TOPIC],
+                direction_received, self._qos)
+        self._direction = DIRECTION_FORWARD
 
     @property
     def should_poll(self):
@@ -240,6 +281,11 @@ class MqttFan(FanEntity):
     def oscillating(self):
         """Return the oscillation state."""
         return self._oscillation
+
+    @property
+    def direction(self):
+        """Return the direction state."""
+        return self._direction
 
     @asyncio.coroutine
     def async_turn_on(self, speed: str=None) -> None:
@@ -309,4 +355,26 @@ class MqttFan(FanEntity):
 
         if self._optimistic_oscillation:
             self._oscillation = oscillating
+            self.hass.async_add_job(self.async_update_ha_state())
+
+    @asyncio.coroutine
+    def async_direction(self, direction: str) -> None:
+        """Set direction.
+
+        This method is a coroutine.
+        """
+        if self._topic[CONF_DIRECTION_COMMAND_TOPIC] is None:
+            return
+
+        if direction is DIRECTION_FORWARD:
+            payload = self._payload[DIRECTION_FORWARD]
+        elif direction is DIRECTION_REVERSE:
+            payload = self._payload[DIRECTION_REVERSE]
+
+        mqtt.async_publish(
+            self.hass, self._topic[CONF_DIRECTION_COMMAND_TOPIC],
+            payload, self._qos, self._retain)
+
+        if self._optimistic_direction:
+            self._direction = direction
             self.hass.async_add_job(self.async_update_ha_state())
